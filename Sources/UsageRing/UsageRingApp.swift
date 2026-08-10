@@ -1,7 +1,20 @@
 import SwiftUI
 import AppKit
 
+/// Entry point. In `--hook <name>` mode we run the hook synchronously and exit
+/// without launching the menu bar UI; otherwise the normal app starts.
 @main
+enum Main {
+    static func main() {
+        let args = CommandLine.arguments
+        if let index = args.firstIndex(of: "--hook"), index + 1 < args.count {
+            HookCLI.run(event: args[index + 1])
+            return
+        }
+        UsageRingApp.main()
+    }
+}
+
 struct UsageRingApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var model = UsageModel()

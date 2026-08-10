@@ -36,6 +36,8 @@ struct StatsView: View {
             }
             Divider()
             settings
+            Divider()
+            OptimizationsView()
             footer
         }
         .padding(14)

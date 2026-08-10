@@ -116,6 +116,31 @@ start it. A dead refresh token is fingerprinted and never retried (see
 - **Launch at login toggle errors** — it needs the installed copy
   (`make install`), not the one running from `dist/`.
 
+## Token optimization toggles
+
+The panel has a **Token optimization** section with three checkboxes. Each one
+makes a concrete, reversible edit to your **global** Claude Code config and
+applies to all work on this Mac (changes take effect on the next Claude Code
+session). Un-checking removes only UsageRing's changes and leaves everything else
+byte-for-byte intact; the manager backs up before its first edit.
+
+| Toggle | What it changes | Honest impact |
+|--------|-----------------|---------------|
+| **Efficiency pack** | A marked block in `~/.claude/CLAUDE.md` (terse output) + two hooks in `~/.claude/settings.json`: a `PreToolUse` **read-guard** that *nudges* away from whole-file reads, and a `PostToolUse` **Bash compressor** that summarizes noisy command output (head + tail + error lines) | Meaningful on chatty/heavy sessions, small on light ones |
+| **Caveman mode** | Installs a skill at `~/.claude/skills/usagering-caveman/SKILL.md` | Cuts a lot of *output* tokens (a minority of a coding session's total). Code, commands, paths, and errors are kept exact |
+| **Disable MCP servers** | Stashes the `mcpServers` block out of `~/.claude.json` (restored verbatim on un-toggle) | Usually the **biggest steady win** — every MCP server's tool definitions ride every request |
+
+**The hooks call UsageRing itself** (`UsageRing --hook bash-compress` / `--hook
+read-guard`), so there's no dependency on `jq`/`python`; all parsing is tested
+Swift. Each hook is fail-safe — on any doubt it emits nothing and Claude Code
+proceeds unchanged, so a hook can never corrupt tool output.
+
+> **Caveman attribution:** the skill's wording is original but the idea is from
+> the open-source [Caveman](https://github.com/JuliusBrussee/caveman) project.
+> The read-guard/compression ideas draw on
+> [nadimtuhin/claude-token-optimizer](https://github.com/nadimtuhin/claude-token-optimizer)
+> and RTK. No third-party code is vendored.
+
 ## UI reference
 
 | State | Ring |
