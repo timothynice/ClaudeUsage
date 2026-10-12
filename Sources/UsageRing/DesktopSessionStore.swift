@@ -68,22 +68,39 @@ enum DesktopSessionStore {
 
     // MARK: - Loading
 
+    /// The Safe Storage password only changes if the desktop app recreates its
+    /// keychain item, so read it once per launch. Reading it on every poll
+    /// re-raised the keychain prompt (and this error) every minute unless the
+    /// user had picked "Always Allow".
+    private static let passwordLock = NSLock()
+    private static var cachedPassword: String?
+
     static func load() throws -> Session {
         let cookiesURL = appSupport.appendingPathComponent("Cookies")
         guard FileManager.default.fileExists(atPath: cookiesURL.path) else {
             throw FetchError.noDesktopSession
         }
-        guard let password = safeStorageKey(), !password.isEmpty else {
+        let cached = passwordLock.withLock { cachedPassword }
+        guard let password = cached ?? safeStorageKey(), !password.isEmpty else {
             throw FetchError.desktopSessionLocked
         }
         let aesKey = try Crypto.pbkdf2SHA1(
             password: password, salt: "saltysalt", rounds: 1003, keyLength: 16)
 
+        let rows = try readCookieRows(cookiesURL)
         var cookies: [String: String] = [:]
-        for (name, hexValue) in try readCookieRows(cookiesURL) {
+        for (name, hexValue) in rows {
             if let value = decryptCookieValue(Data(hex: hexValue), key: aesKey) {
                 cookies[name] = value
             }
+        }
+        if cookies.isEmpty, !rows.isEmpty {
+            // Nothing decrypts: the cached password went stale. Drop it and
+            // re-read the keychain once.
+            passwordLock.withLock { cachedPassword = nil }
+            if cached != nil { return try load() }
+        } else {
+            passwordLock.withLock { cachedPassword = password }
         }
         guard let sessionKey = cookies["sessionKey"], !sessionKey.isEmpty else {
             // Desktop app present but not signed in — let the caller try other paths.
