@@ -67,6 +67,10 @@ enum FetchError: Error, Equatable {
     case noDesktopSession
     case desktopSessionLocked
     case desktopSessionStale
+    /// The login keychain rejects every request (even reading its own
+    /// settings) while reporting itself unlocked. Locking and unlocking it
+    /// clears this.
+    case keychainStuck
 
     var title: String {
         switch self {
@@ -80,6 +84,7 @@ enum FetchError: Error, Equatable {
         case .noDesktopSession: return "Not signed in"
         case .desktopSessionLocked: return "Keychain access needed"
         case .desktopSessionStale: return "Session needs a refresh"
+        case .keychainStuck: return "Keychain is stuck"
         }
     }
 
@@ -90,7 +95,7 @@ enum FetchError: Error, Equatable {
         case .noCredentials, .credentialsUnreadable, .tokenExpired:
             return true
         case .refreshRateLimited, .http, .network, .parse,
-             .noDesktopSession, .desktopSessionLocked, .desktopSessionStale:
+             .noDesktopSession, .desktopSessionLocked, .desktopSessionStale, .keychainStuck:
             return false
         }
     }
@@ -116,6 +121,63 @@ enum FetchError: Error, Equatable {
                 + "usage data can be read from the desktop app’s session."
         case .desktopSessionStale:
             return "Open the Claude desktop app once to refresh its session, then this updates automatically."
+        case .keychainStuck:
+            return "Your Mac’s login keychain is refusing every request, so the desktop app’s session "
+                + "can’t be read. Locking and unlocking it fixes this."
+        }
+    }
+
+    /// The one-click fix the banner offers, if any.
+    var fixAction: FixAction? {
+        if isSignInFixable { return .signIn }
+        if case .keychainStuck = self { return .unlockKeychain }
+        return nil
+    }
+}
+
+/// A fix the user can start from the error banner. Each opens a Terminal
+/// script; the app itself never handles a password or credential.
+enum FixAction {
+    case signIn
+    case unlockKeychain
+
+    var buttonTitle: String {
+        switch self {
+        case .signIn: return "Sign in to Claude Code"
+        case .unlockKeychain: return "Unlock keychain in Terminal"
+        }
+    }
+
+    var help: String {
+        switch self {
+        case .signIn: return "Opens `claude auth login` in Terminal"
+        case .unlockKeychain: return "Locks and unlocks your login keychain in Terminal; macOS asks for your Mac password"
+        }
+    }
+
+    var awaitingTitle: String {
+        switch self {
+        case .signIn: return "Waiting for sign-in to finish…"
+        case .unlockKeychain: return "Waiting for the keychain to unlock…"
+        }
+    }
+
+    var awaitingMessage: String {
+        switch self {
+        case .signIn:
+            return "Complete the login in the Terminal window that opened. This panel updates on its own."
+        case .unlockKeychain:
+            return "Enter your Mac login password in the Terminal window that opened. This panel updates on its own."
+        }
+    }
+
+    var launchFailedMessage: String {
+        switch self {
+        case .signIn:
+            return "Couldn't open Terminal automatically — run `claude auth login` yourself."
+        case .unlockKeychain:
+            return "Couldn't open Terminal automatically — run `security lock-keychain` then "
+                + "`security unlock-keychain` yourself."
         }
     }
 }

@@ -82,7 +82,7 @@ enum DesktopSessionStore {
         }
         let cached = passwordLock.withLock { cachedPassword }
         guard let password = cached ?? safeStorageKey(), !password.isEmpty else {
-            throw FetchError.desktopSessionLocked
+            throw keychainIsStuck() ? FetchError.keychainStuck : FetchError.desktopSessionLocked
         }
         let aesKey = try Crypto.pbkdf2SHA1(
             password: password, salt: "saltysalt", rounds: 1003, keyLength: 16)
@@ -119,6 +119,16 @@ enum DesktopSessionStore {
               let text = String(data: output.data, encoding: .utf8) else { return nil }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// A healthy unlocked keychain reports its settings without any prompt.
+    /// When it's wedged, even that fails ("passphrase not correct"), which
+    /// separates "keychain broken" from "access prompt not approved".
+    private static func keychainIsStuck() -> Bool {
+        let login = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Keychains/login.keychain-db").path
+        guard let output = run("/usr/bin/security", ["show-keychain-info", login]) else { return false }
+        return output.status != 0
     }
 
     /// Copies the (possibly WAL-backed) cookie DB somewhere stable and reads the
