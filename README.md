@@ -99,6 +99,14 @@ start it. A dead refresh token is fingerprinted and never retried (see
 - **"Keychain access needed"** — approve the `Claude Safe Storage` prompt and
   choose **Always Allow**. This lets UsageRing read the desktop app's session;
   it's a one-time click.
+- **"Keychain is stuck"** — your login keychain is refusing every request
+  (macOS reports it unlocked, but every read fails with "passphrase not
+  correct"), so there's no prompt to approve. **Click the warning** and
+  UsageRing opens a Terminal script that locks and unlocks the keychain; macOS
+  asks for your Mac password directly. To do it by hand:
+  `security lock-keychain ~/Library/Keychains/login.keychain-db` then
+  `security unlock-keychain ~/Library/Keychains/login.keychain-db`. If only an
+  old password works, re-sync it with `security set-keychain-password`.
 - **"Session needs a refresh"** — the desktop app's Cloudflare clearance went
   stale (usually because the app hasn't run in a while). Open the Claude desktop
   app once and UsageRing recovers on the next poll.
