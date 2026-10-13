@@ -14,9 +14,9 @@ struct StatsView: View {
             if let error = model.lastError {
                 ErrorBanner(
                     error: error,
-                    isAwaitingSignIn: model.isAwaitingSignIn,
-                    launchFailed: model.signInLaunchFailed,
-                    onSignIn: { model.beginSignIn() })
+                    isAwaitingFix: model.isAwaitingFix,
+                    launchFailed: model.fixLaunchFailed,
+                    onFix: { model.beginFix($0) })
             }
             if let snapshot = model.snapshot {
                 VStack(alignment: .leading, spacing: 12) {
@@ -36,6 +36,8 @@ struct StatsView: View {
             }
             Divider()
             settings
+            Divider()
+            OptimizationsView()
             footer
         }
         .padding(14)
@@ -217,27 +219,29 @@ struct UsageBar: View {
 
 struct ErrorBanner: View {
     let error: FetchError
-    var isAwaitingSignIn: Bool = false
+    var isAwaitingFix: Bool = false
     var launchFailed: Bool = false
-    var onSignIn: (() -> Void)?
+    var onFix: ((FixAction) -> Void)?
 
     @State private var isHovering = false
 
-    private var isActionable: Bool {
-        error.isSignInFixable && onSignIn != nil && !isAwaitingSignIn
+    /// The fix to offer, only when tapping would actually do something.
+    private var action: FixAction? {
+        guard let fix = error.fixAction, onFix != nil, !isAwaitingFix else { return nil }
+        return fix
     }
 
     var body: some View {
-        if isActionable {
-            Button { onSignIn?() } label: { banner }
+        if let action {
+            Button { onFix?(action) } label: { banner }
                 .buttonStyle(.plain)
                 .onHover { hovering in
                     isHovering = hovering
                     if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
                 }
-                .accessibilityLabel("Sign in to Claude Code")
-                .accessibilityHint("Opens the claude auth login flow in Terminal")
-                .help("Opens `claude auth login` in Terminal")
+                .accessibilityLabel(action.buttonTitle)
+                .accessibilityHint(action.help)
+                .help(action.help)
         } else {
             banner
         }
@@ -245,13 +249,13 @@ struct ErrorBanner: View {
 
     private var banner: some View {
         VStack(alignment: .leading, spacing: 5) {
-            if isAwaitingSignIn {
+            if isAwaitingFix, let fix = error.fixAction {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
-                    Text("Waiting for sign-in to finish…")
+                    Text(fix.awaitingTitle)
                         .font(.system(size: 12, weight: .semibold))
                 }
-                Text("Complete the login in the Terminal window that opened. This panel updates on its own.")
+                Text(fix.awaitingMessage)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -263,16 +267,16 @@ struct ErrorBanner: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                if launchFailed {
-                    Text("Couldn't open Terminal automatically — run `claude auth login` yourself.")
+                if launchFailed, let fix = error.fixAction {
+                    Text(fix.launchFailedMessage)
                         .font(.caption)
                         .foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
-                } else if isActionable {
+                } else if let action {
                     // Only advertise the button when it actually does something.
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.up.forward.app.fill")
-                        Text("Sign in to Claude Code")
+                        Text(action.buttonTitle)
                     }
                     .font(.system(size: 11.5, weight: .semibold))
                     .foregroundStyle(.white)
@@ -286,7 +290,7 @@ struct ErrorBanner: View {
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 8)
-            .fill(Color.orange.opacity(isHovering && isActionable ? 0.16 : 0.1)))
+            .fill(Color.orange.opacity(isHovering && action != nil ? 0.16 : 0.1)))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.orange.opacity(0.25), lineWidth: 1))
         .contentShape(RoundedRectangle(cornerRadius: 8))
     }

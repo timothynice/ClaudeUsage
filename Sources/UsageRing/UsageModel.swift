@@ -8,13 +8,13 @@ final class UsageModel: ObservableObject {
     @Published private(set) var lastError: FetchError?
     @Published private(set) var lastUpdated: Date?
     @Published private(set) var isRefreshing = false
-    @Published private(set) var isAwaitingSignIn = false
-    @Published private(set) var signInLaunchFailed = false
+    @Published private(set) var isAwaitingFix = false
+    @Published private(set) var fixLaunchFailed = false
 
     private let client = UsageClient()
     private var pollTask: Task<Void, Never>?
     /// While set, poll every few seconds so the ring lights up promptly after
-    /// the user finishes signing in.
+    /// the user finishes the fix.
     private var fastPollUntil: Date?
 
     /// Poll interval in seconds; override with `defaults write com.usagering.app refreshSeconds 30`.
@@ -39,13 +39,18 @@ final class UsageModel: ObservableObject {
         }
     }
 
-    /// Opens the official `claude auth login` flow in Terminal. The sign-in
-    /// itself happens in the user's browser — the app never handles credentials.
-    func beginSignIn() {
-        let launched = LoginLauncher.launch()
-        signInLaunchFailed = !launched
+    /// Runs the banner's fix in Terminal: the official `claude auth login`
+    /// flow, or a keychain lock/unlock where macOS asks for the password.
+    /// Either way the app never handles credentials.
+    func beginFix(_ action: FixAction) {
+        let launched: Bool
+        switch action {
+        case .signIn: launched = LoginLauncher.launch()
+        case .unlockKeychain: launched = KeychainUnlockLauncher.launch()
+        }
+        fixLaunchFailed = !launched
         guard launched else { return }
-        isAwaitingSignIn = true
+        isAwaitingFix = true
         fastPollUntil = Date().addingTimeInterval(300)
         startPolling()
     }
@@ -53,9 +58,9 @@ final class UsageModel: ObservableObject {
     private func nextPollInterval() -> TimeInterval {
         guard let fastPollUntil else { return refreshInterval }
         if Date() < fastPollUntil { return 5 }
-        // Window elapsed without a successful sign-in; fall back to normal pace.
+        // Window elapsed without a successful fix; fall back to normal pace.
         self.fastPollUntil = nil
-        isAwaitingSignIn = false
+        isAwaitingFix = false
         return refreshInterval
     }
 
@@ -68,8 +73,8 @@ final class UsageModel: ObservableObject {
             snapshot = snap
             lastUpdated = Date()
             lastError = nil
-            isAwaitingSignIn = false
-            signInLaunchFailed = false
+            isAwaitingFix = false
+            fixLaunchFailed = false
             fastPollUntil = nil
             if profile == nil {
                 profile = try? await client.fetchProfile()

@@ -52,22 +52,89 @@ enum LoginLauncher {
 
     @discardableResult
     static func writeScript(into directory: URL) throws -> URL {
-        let url = directory.appendingPathComponent("Sign in to Claude Code.command")
-        try scriptContents().write(to: url, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
-        return url
+        try TerminalScript.write(scriptContents(), named: "Sign in to Claude Code.command", into: directory)
     }
 
     /// Launches the sign-in flow. Returns false if the helper script could not
     /// be created, so the UI can fall back to telling the user the command.
     @discardableResult
     static func launch() -> Bool {
+        TerminalScript.open(scriptContents(), named: "Sign in to Claude Code.command")
+    }
+}
+
+/// Resets a login keychain that rejects every request while claiming to be
+/// unlocked. `security unlock-keychain` asks for the password itself in
+/// Terminal, so the app never sees it.
+enum KeychainUnlockLauncher {
+    static func scriptContents() -> String {
+        """
+        #!/bin/bash
+        # Written by UsageRing to reset a stuck login keychain.
+
+        KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
+
+        echo "Your login keychain is refusing every request, so UsageRing can't read"
+        echo "the Claude desktop app's session. Locking and unlocking it fixes this."
+        echo
+        echo "Enter your Mac login password below (typing stays hidden)."
+        echo "It goes straight to macOS's 'security' tool — UsageRing never sees it."
+        echo
+
+        /usr/bin/security lock-keychain "$KEYCHAIN"
+
+        unlocked=1
+        for attempt in 1 2 3; do
+          if /usr/bin/security unlock-keychain "$KEYCHAIN"; then
+            unlocked=0
+            break
+          fi
+          echo "That password didn't unlock it."
+        done
+
+        echo
+        if [ $unlocked -eq 0 ]; then
+          echo "Keychain unlocked. The UsageRing menu bar icon updates within a few seconds."
+        else
+          echo "If you recently changed your Mac password, the keychain may still use the old one."
+          echo "Re-sync it with (asks for the old password, then the current one):"
+          echo "    security set-keychain-password $KEYCHAIN"
+        fi
+        echo
+        read -n 1 -s -r -p "Press any key to close this window."
+        echo
+
+        """
+    }
+
+    @discardableResult
+    static func writeScript(into directory: URL) throws -> URL {
+        try TerminalScript.write(scriptContents(), named: "Unlock login keychain.command", into: directory)
+    }
+
+    @discardableResult
+    static func launch() -> Bool {
+        TerminalScript.open(scriptContents(), named: "Unlock login keychain.command")
+    }
+}
+
+/// Writes an executable `.command` file and opens it; LaunchServices hands
+/// `.command` to Terminal, so no Automation permission is needed.
+enum TerminalScript {
+    @discardableResult
+    static func write(_ contents: String, named name: String, into directory: URL) throws -> URL {
+        let url = directory.appendingPathComponent(name)
+        try contents.write(to: url, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        return url
+    }
+
+    static func open(_ contents: String, named name: String) -> Bool {
         do {
             let directory = FileManager.default.temporaryDirectory
                 .appendingPathComponent("UsageRing", isDirectory: true)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let script = try writeScript(into: directory)
-            NSWorkspace.shared.open(script)
+            NSWorkspace.shared.open(try write(contents, named: name, into: directory))
             return true
         } catch {
             return false

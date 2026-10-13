@@ -70,4 +70,49 @@ final class LoginLauncherTests: XCTestCase {
         XCTAssertEqual(first, second, "reuses one stable path instead of littering temp files")
         XCTAssertTrue(FileManager.default.isExecutableFile(atPath: second.path))
     }
+
+    func testOnlyAStuckKeychainOffersTheUnlockFix() {
+        XCTAssertEqual(FetchError.keychainStuck.fixAction, .unlockKeychain)
+        XCTAssertEqual(FetchError.noCredentials.fixAction, .signIn)
+        XCTAssertFalse(FetchError.keychainStuck.isSignInFixable)
+        // An unanswered access prompt can't be fixed from Terminal.
+        XCTAssertNil(FetchError.desktopSessionLocked.fixAction)
+        XCTAssertNil(FetchError.network("offline").fixAction)
+    }
+
+    func testUnlockScriptLocksThenUnlocksTheLoginKeychain() throws {
+        let script = KeychainUnlockLauncher.scriptContents()
+        XCTAssertTrue(script.hasPrefix("#!/bin/bash"), script)
+        let lock = try XCTUnwrap(script.range(of: "security lock-keychain"))
+        let unlock = try XCTUnwrap(script.range(of: "security unlock-keychain"))
+        XCTAssertLessThan(lock.lowerBound, unlock.lowerBound)
+        XCTAssertTrue(script.contains("Library/Keychains/login.keychain-db"), script)
+        // The password must go to macOS's own prompt, never on a command line.
+        XCTAssertFalse(script.contains("unlock-keychain -p"), script)
+    }
+
+    func testUnlockScriptIsValidBash() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("syntax-\(UUID().uuidString).command")
+        try KeychainUnlockLauncher.scriptContents().write(to: url, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = ["-n", url.path] // parse only, never execute
+        try process.run()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+    }
+
+    func testUnlockScriptIsWrittenExecutable() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("launcher-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let url = try KeychainUnlockLauncher.writeScript(into: directory)
+        XCTAssertEqual(url.pathExtension, "command")
+        XCTAssertTrue(FileManager.default.isExecutableFile(atPath: url.path))
+    }
 }

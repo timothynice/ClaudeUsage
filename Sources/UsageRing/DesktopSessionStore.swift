@@ -68,22 +68,39 @@ enum DesktopSessionStore {
 
     // MARK: - Loading
 
+    /// The Safe Storage password only changes if the desktop app recreates its
+    /// keychain item, so read it once per launch. Reading it on every poll
+    /// re-raised the keychain prompt (and this error) every minute unless the
+    /// user had picked "Always Allow".
+    private static let passwordLock = NSLock()
+    private static var cachedPassword: String?
+
     static func load() throws -> Session {
         let cookiesURL = appSupport.appendingPathComponent("Cookies")
         guard FileManager.default.fileExists(atPath: cookiesURL.path) else {
             throw FetchError.noDesktopSession
         }
-        guard let password = safeStorageKey(), !password.isEmpty else {
-            throw FetchError.desktopSessionLocked
+        let cached = passwordLock.withLock { cachedPassword }
+        guard let password = cached ?? safeStorageKey(), !password.isEmpty else {
+            throw keychainIsStuck() ? FetchError.keychainStuck : FetchError.desktopSessionLocked
         }
         let aesKey = try Crypto.pbkdf2SHA1(
             password: password, salt: "saltysalt", rounds: 1003, keyLength: 16)
 
+        let rows = try readCookieRows(cookiesURL)
         var cookies: [String: String] = [:]
-        for (name, hexValue) in try readCookieRows(cookiesURL) {
+        for (name, hexValue) in rows {
             if let value = decryptCookieValue(Data(hex: hexValue), key: aesKey) {
                 cookies[name] = value
             }
+        }
+        if cookies.isEmpty, !rows.isEmpty {
+            // Nothing decrypts: the cached password went stale. Drop it and
+            // re-read the keychain once.
+            passwordLock.withLock { cachedPassword = nil }
+            if cached != nil { return try load() }
+        } else {
+            passwordLock.withLock { cachedPassword = password }
         }
         guard let sessionKey = cookies["sessionKey"], !sessionKey.isEmpty else {
             // Desktop app present but not signed in — let the caller try other paths.
@@ -102,6 +119,16 @@ enum DesktopSessionStore {
               let text = String(data: output.data, encoding: .utf8) else { return nil }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// A healthy unlocked keychain reports its settings without any prompt.
+    /// When it's wedged, even that fails ("passphrase not correct"), which
+    /// separates "keychain broken" from "access prompt not approved".
+    private static func keychainIsStuck() -> Bool {
+        let login = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Keychains/login.keychain-db").path
+        guard let output = run("/usr/bin/security", ["show-keychain-info", login]) else { return false }
+        return output.status != 0
     }
 
     /// Copies the (possibly WAL-backed) cookie DB somewhere stable and reads the
